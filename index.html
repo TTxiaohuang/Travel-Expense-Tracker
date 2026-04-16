@@ -1,0 +1,463 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>旅迹 Pro - 极简记账版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style>
+        .glass-card { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.3); }
+        ::-webkit-scrollbar { display: none; }
+        .chart-container { width: 100%; min-height: 350px; }
+        .toast-enter-active, .toast-leave-active { transition: all 0.3s ease; }
+        .toast-enter-from, .toast-leave-to { opacity: 0; transform: translate(-50%, -20px); }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans selection:bg-indigo-100">
+
+    <div id="app" class="max-w-md mx-auto min-h-screen flex flex-col p-4 pb-24">
+        
+        <!-- 动态 Toast 提示 -->
+        <transition name="toast">
+            <div v-if="showToast" class="fixed top-6 left-1/2 -translate-x-1/2 z-[100]">
+                <div class="bg-slate-900/90 text-white px-6 py-3 rounded-full shadow-2xl flex items-center space-x-2">
+                    <i class="ph-bold ph-check-circle text-emerald-400"></i>
+                    <span class="text-sm font-bold">{{ toastMsg }}</span>
+                </div>
+            </div>
+        </transition>
+
+        <div class="relative overflow-hidden bg-slate-900 rounded-[2.5rem] p-8 mb-6 shadow-2xl">
+            <div class="absolute -top-10 -right-10 w-40 h-40 bg-indigo-500/10 rounded-full blur-3xl"></div>
+            <div class="relative z-10 text-center">
+                <p class="text-slate-500 text-[10px] font-black tracking-[0.2em] uppercase mb-2">Total Travel Cost</p>
+                <div class="flex items-baseline justify-center space-x-1 text-white">
+                    <span class="text-xl font-light opacity-40">¥</span>
+                    <span class="text-5xl font-black tracking-tighter">{{ totalAmount }}</span>
+                </div>
+            </div>
+        </div>
+
+        <main class="flex-grow">
+            <!-- 记账输入区 -->
+            <div v-show="currentTab === 'input'" class="space-y-6">
+                <div class="bg-white rounded-[2.5rem] p-7 shadow-sm">
+                    <div class="space-y-6">
+                        <div class="flex items-center border-b-2 border-slate-50 pb-2 focus-within:border-indigo-500 transition-colors">
+                            <span class="text-2xl font-bold text-slate-300 mr-2">¥</span>
+                            <input type="number" v-model="form.amount" placeholder="0.00" class="w-full text-4xl font-black bg-transparent outline-none">
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="bg-slate-50 p-3 rounded-2xl">
+                                <label class="block text-[10px] font-black text-slate-400 uppercase mb-1">大类</label>
+                                <select v-model="form.primaryCategory" @change="updateSecondaryOptions" class="w-full bg-transparent text-sm font-bold outline-none">
+                                    <option v-for="(sub, main) in categoryData" :key="main">{{ main }}</option>
+                                </select>
+                            </div>
+                            <div class="bg-slate-50 p-3 rounded-2xl">
+                                <label class="block text-[10px] font-black text-slate-400 uppercase mb-1">子类</label>
+                                <select v-model="form.secondaryCategory" class="w-full bg-transparent text-sm font-bold outline-none">
+                                    <option v-for="sub in currentSecondaryOptions">{{ sub }}</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div v-if="form.primaryCategory === '住宿'" class="grid grid-cols-2 gap-4">
+                            <div class="bg-slate-50 p-3 rounded-2xl">
+                                <label class="block text-[10px] font-black text-slate-400 uppercase mb-1">入住</label>
+                                <input type="date" v-model="form.startDate" class="w-full bg-transparent text-xs font-bold outline-none">
+                            </div>
+                            <div class="bg-slate-50 p-3 rounded-2xl">
+                                <label class="block text-[10px] font-black text-slate-400 uppercase mb-1">退房</label>
+                                <input type="date" v-model="form.endDate" class="w-full bg-transparent text-xs font-bold outline-none">
+                            </div>
+                        </div>
+                        <div v-else class="bg-slate-50 p-3 rounded-2xl">
+                            <label class="block text-[10px] font-black text-slate-400 uppercase mb-1">日期</label>
+                            <input type="date" v-model="form.date" class="w-full bg-transparent text-sm font-bold outline-none">
+                        </div>
+
+                        <div class="bg-slate-50 p-3 rounded-2xl">
+                            <label class="block text-[10px] font-black text-slate-400 uppercase mb-1">备注</label>
+                            <input type="text" v-model="form.note" placeholder="补充信息..." class="w-full bg-transparent text-sm font-bold outline-none">
+                        </div>
+
+                        <button @click="saveExpense" class="w-full bg-slate-900 text-white font-bold py-5 rounded-[1.5rem] shadow-xl active:scale-95 transition-all">
+                            确认记账
+                        </button>
+                    </div>
+                </div>
+
+                <div class="space-y-4">
+                    <div v-for="(item, index) in expenses" :key="item.id" class="bg-white p-5 rounded-[2rem] flex justify-between items-center shadow-sm">
+                        <div class="flex items-center space-x-4">
+                            <div :class="(categoryIcons[item.primaryCategory] || categoryIcons['其他']).bg" class="w-12 h-12 rounded-2xl flex items-center justify-center text-xl">
+                                <i :class="[(categoryIcons[item.primaryCategory] || categoryIcons['其他']).icon, (categoryIcons[item.primaryCategory] || categoryIcons['其他']).color]"></i>
+                            </div>
+                            <div>
+                                <div class="font-bold text-slate-800 text-sm">{{ item.note || item.secondaryCategory }}</div>
+                                <div class="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">{{ item.date || item.startDate }}</div>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-4">
+                            <div class="font-black text-slate-900 text-sm">¥{{ item.amount.toFixed(0) }}</div>
+                            <button @click="deleteExpense(index)" class="text-slate-200 hover:text-red-400 transition-colors"><i class="ph-bold ph-trash text-lg"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 数据统计区 -->
+            <div v-show="currentTab === 'stats'" class="space-y-6 pb-10">
+                
+                <div class="bg-slate-200 p-1 rounded-2xl flex items-center shadow-inner">
+                    <button @click="changeAnalysisLevel('primary')" :class="analysisLevel === 'primary' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'" class="flex-1 py-2 rounded-xl text-xs font-black uppercase transition-all duration-300">大类统计</button>
+                    <button @click="changeAnalysisLevel('secondary')" :class="analysisLevel === 'secondary' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'" class="flex-1 py-2 rounded-xl text-xs font-black uppercase transition-all duration-300">子类明细</button>
+                </div>
+
+                <div class="bg-white rounded-[2.5rem] p-7 shadow-sm">
+                    <div class="flex items-center justify-between mb-6">
+                        <div class="flex items-center space-x-2 text-slate-400">
+                            <i class="ph-fill ph-chart-pie-slice text-xl text-indigo-500"></i>
+                            <h3 class="text-xs font-black uppercase tracking-widest">支出占比分析</h3>
+                        </div>
+                        <span class="text-[10px] font-bold text-indigo-400 bg-indigo-50 px-2 py-1 rounded-md">{{ analysisLevel === 'primary' ? '大类' : '明细' }}</span>
+                    </div>
+                    <div id="pieChart" class="chart-container" style="min-height: 300px;"></div>
+                </div>
+
+                <div class="bg-white rounded-[2.5rem] p-7 shadow-sm">
+                    <div class="flex items-center justify-between mb-6">
+                        <div class="flex items-center space-x-2 text-slate-400">
+                            <i class="ph-fill ph-sort-descending text-xl text-emerald-500"></i>
+                            <h3 class="text-xs font-black uppercase tracking-widest">消费金额排行榜</h3>
+                        </div>
+                        <span class="text-[10px] font-bold text-emerald-400 bg-emerald-50 px-2 py-1 rounded-md">{{ analysisLevel === 'primary' ? '大类' : '明细' }}</span>
+                    </div>
+                    <div id="rankingChart" class="chart-container"></div>
+                </div>
+
+                <div class="bg-white rounded-[2.5rem] p-7 shadow-sm">
+                    <div class="flex justify-between items-start mb-6">
+                        <div class="flex items-center space-x-2 text-slate-400">
+                            <i class="ph-fill ph-calendar-check text-xl text-orange-500"></i>
+                            <h3 class="text-xs font-black uppercase tracking-widest">每日花费明细</h3>
+                        </div>
+                        <div class="flex flex-col items-end">
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" v-model="excludeBigTransport" class="sr-only peer">
+                                <div class="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:bg-indigo-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                            </label>
+                            <span class="text-[10px] text-slate-400 mt-1 font-bold">不计大交通</span>
+                        </div>
+                    </div>
+                    <div id="trendChart" class="chart-container" style="min-height: 250px;"></div>
+                </div>
+
+                <!-- 清除数据按钮 -->
+                <div class="pt-4 pb-8 flex justify-center">
+                    <button @click="clearAllData" class="flex items-center space-x-2 text-red-400 bg-red-50/80 px-6 py-3 rounded-2xl active:scale-95 transition-all">
+                        <i class="ph-bold ph-warning-circle text-lg"></i>
+                        <span class="text-xs font-black tracking-widest">清空所有历史数据</span>
+                    </button>
+                </div>
+            </div>
+        </main>
+
+        <div class="fixed bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-sm glass-card rounded-full shadow-2xl flex justify-around p-2 z-50">
+            <button @click="currentTab = 'input'" :class="currentTab === 'input' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400'" class="flex items-center space-x-2 px-6 py-3 rounded-full transition-all duration-500">
+                <i class="ph-bold ph-plus-circle text-lg"></i>
+                <span v-show="currentTab === 'input'" class="text-sm font-bold">记账</span>
+            </button>
+            <button @click="currentTab = 'stats'" :class="currentTab === 'stats' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400'" class="flex items-center space-x-2 px-6 py-3 rounded-full transition-all duration-500">
+                <i class="ph-bold ph-chart-line-up text-lg"></i>
+                <span v-show="currentTab === 'stats'" class="text-sm font-bold">分析</span>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                const dict = {
+                    '餐饮': ['正餐/特色菜', '小吃/夜宵', '咖啡/饮品', '超市/便利店'],
+                    '大交通': ['高铁/动车', '飞机', '长途大巴/租车'],
+                    '市内交通': ['打车/网约车', '地铁/公交/索道', '共享单车'],
+                    '住宿': ['酒店', '民宿/客栈'],
+                    '游玩': ['景点门票', '演出/体验', '导游/讲解'],
+                    '购物': ['伴手礼/特产', '服饰/日用品'],
+                    '其他': ['医药/杂项']
+                };
+                
+                const icons = {
+                    '餐饮': { icon: 'ph-fill ph-fork-knife', color: 'text-orange-500', bg: 'bg-orange-50', hex: '#f97316' },
+                    '大交通': { icon: 'ph-fill ph-airplane-tilt', color: 'text-blue-600', bg: 'bg-blue-50', hex: '#2563eb' },
+                    '市内交通': { icon: 'ph-fill ph-taxi', color: 'text-sky-500', bg: 'bg-sky-50', hex: '#0ea5e9' },
+                    '住宿': { icon: 'ph-fill ph-bed', color: 'text-indigo-500', bg: 'bg-indigo-50', hex: '#6366f1' },
+                    '游玩': { icon: 'ph-fill ph-ticket', color: 'text-emerald-500', bg: 'bg-emerald-50', hex: '#10b981' },
+                    '购物': { icon: 'ph-fill ph-shopping-bag', color: 'text-pink-500', bg: 'bg-pink-50', hex: '#ec4899' },
+                    '其他': { icon: 'ph-fill ph-dots-three-circle', color: 'text-slate-400', bg: 'bg-slate-100', hex: '#94a3b8' }
+                };
+
+                const getLocalDateStr = (dateObj) => {
+                    return `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`;
+                };
+                const today = new Date();
+                const tomorrow = new Date(today);
+                tomorrow.setDate(tomorrow.getDate() + 1);
+
+                return {
+                    currentTab: 'input',
+                    analysisLevel: 'primary',
+                    showToast: false,
+                    toastMsg: '账单已保存',
+                    categoryData: dict,
+                    categoryIcons: icons,
+                    currentSecondaryOptions: dict['餐饮'],
+                    excludeBigTransport: true,
+                    form: { 
+                        amount: '', primaryCategory: '餐饮', secondaryCategory: '正餐/特色菜', 
+                        date: getLocalDateStr(today), startDate: getLocalDateStr(today), endDate: getLocalDateStr(tomorrow), note: '' 
+                    },
+                    expenses: [],
+                    charts: { pie: null, ranking: null, trend: null }
+                }
+            },
+            computed: {
+                totalAmount() {
+                    return this.expenses.reduce((s, i) => s + i.amount, 0).toLocaleString('zh-CN', { minimumFractionDigits: 0 });
+                }
+            },
+            watch: {
+                currentTab(v) { if (v === 'stats') this.$nextTick(() => this.renderCharts()); },
+                excludeBigTransport() { this.$nextTick(() => this.renderTrend()); } 
+            },
+            mounted() { 
+                this.loadData();
+                window.addEventListener('resize', () => Object.values(this.charts).forEach(c => c && c.resize()));
+            },
+            methods: {
+                triggerToast(msg) {
+                    this.toastMsg = msg;
+                    this.showToast = true;
+                    setTimeout(() => { this.showToast = false; }, 2000);
+                },
+                changeAnalysisLevel(level) {
+                    this.analysisLevel = level;
+                    this.renderCharts();
+                },
+                updateSecondaryOptions() {
+                    this.currentSecondaryOptions = this.categoryData[this.form.primaryCategory];
+                    this.form.secondaryCategory = this.currentSecondaryOptions[0];
+                },
+                saveExpense() {
+                    const amt = parseFloat(this.form.amount);
+                    if (!amt || amt <= 0) return;
+                    
+                    let record = { id: Date.now(), amount: amt, primaryCategory: this.form.primaryCategory, secondaryCategory: this.form.secondaryCategory, note: this.form.note };
+                    
+                    if (this.form.primaryCategory === '住宿') {
+                        if (!this.form.endDate) return alert('请选择退房日期');
+                        const start = new Date(this.form.startDate), end = new Date(this.form.endDate);
+                        const diff = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
+                        
+                        if (isNaN(diff) || diff <= 0) return alert('退房日期必须晚于入住日期');
+                        
+                        record = { ...record, isMultiDay: true, startDate: this.form.startDate, endDate: this.form.endDate, nights: diff };
+                    } else {
+                        record = { ...record, isMultiDay: false, date: this.form.date };
+                    }
+                    
+                    this.expenses.unshift(record);
+                    this.saveData();
+                    this.form.amount = ''; this.form.note = '';
+                    this.triggerToast('账单已保存');
+                },
+                saveData() { localStorage.setItem('Travel_v12_Final', JSON.stringify(this.expenses)); },
+                loadData() { const s = localStorage.getItem('Travel_v12_Final'); if(s) this.expenses = JSON.parse(s); },
+                deleteExpense(i) { if(confirm('删除此账单？')) { this.expenses.splice(i,1); this.saveData(); } },
+                
+                // 新增：清空所有数据方法
+                clearAllData() {
+                    if (this.expenses.length === 0) {
+                        alert('当前没有任何记账数据。');
+                        return;
+                    }
+                    if (confirm('⚠️ 危险操作：\n此操作将永久删除所有记账数据，且不可恢复！\n\n您确定要开启一段新旅程吗？')) {
+                        this.expenses = [];
+                        this.saveData();
+                        this.renderCharts(); // 重新渲染以清理画布
+                        this.triggerToast('数据已彻底清空');
+                    }
+                },
+
+                getAggregatedData() {
+                    const map = {};
+                    const parentMap = {};
+                    this.expenses.forEach(i => {
+                        const pCat = i.primaryCategory || '其他';
+                        const sCat = i.secondaryCategory || pCat; 
+                        
+                        const key = this.analysisLevel === 'primary' ? pCat : sCat;
+                        map[key] = (map[key] || 0) + i.amount;
+                        parentMap[key] = pCat;
+                    });
+                    return { map, parentMap };
+                },
+
+                renderCharts() {
+                    // 若无数据，安全卸载图表内容，防止画面残留
+                    if (this.expenses.length === 0) {
+                        if (this.charts.pie) this.charts.pie.clear();
+                        if (this.charts.ranking) {
+                            this.charts.ranking.clear();
+                            document.getElementById('rankingChart').style.height = '350px';
+                        }
+                        if (this.charts.trend) this.charts.trend.clear();
+                        return;
+                    }
+                    this.renderPie();
+                    this.renderRanking();
+                    this.renderTrend();
+                },
+
+                renderPie() {
+                    const { map, parentMap } = this.getAggregatedData();
+                    const data = Object.keys(map).map(k => {
+                        const parent = parentMap[k] || '其他';
+                        const iconDef = this.categoryIcons[parent] || this.categoryIcons['其他'];
+                        return {
+                            name: k,
+                            value: map[k].toFixed(2),
+                            itemStyle: { color: iconDef.hex }
+                        }
+                    });
+                    if (!this.charts.pie) this.charts.pie = echarts.init(document.getElementById('pieChart'));
+                    this.charts.pie.setOption({
+                        tooltip: { trigger: 'item', formatter: '{b}: ¥{c}' },
+                        series: [{ 
+                            type: 'pie', radius: ['45%', '65%'], center: ['50%', '50%'], data, 
+                            itemStyle: { borderRadius: 10, borderColor: '#fff', borderWidth: 4 },
+                            label: { show: true, formatter: '{b}\n{d}%', color: '#64748b', fontSize: 10, fontWeight: 'bold' }
+                        }]
+                    }, true);
+                },
+
+                renderRanking() {
+                    const { map, parentMap } = this.getAggregatedData();
+                    const sorted = Object.keys(map).map(k => {
+                        const parent = parentMap[k] || '其他';
+                        const iconDef = this.categoryIcons[parent] || this.categoryIcons['其他'];
+                        
+                        let displayName = k;
+                        if (this.analysisLevel === 'secondary' && parent !== k) {
+                            displayName = `${parent} - ${k}`;
+                        }
+
+                        return {
+                            name: displayName, 
+                            value: map[k], 
+                            color: iconDef.hex 
+                        }
+                    }).sort((a,b) => a.value - b.value);
+                    
+                    if (!this.charts.ranking) this.charts.ranking = echarts.init(document.getElementById('rankingChart'));
+                    const chartHeight = Math.max(350, sorted.length * 40);
+                    document.getElementById('rankingChart').style.height = chartHeight + 'px';
+                    this.charts.ranking.resize();
+
+                    this.charts.ranking.setOption({
+                        grid: { left: '5%', right: '20%', bottom: '5%', top: '2%', containLabel: true },
+                        xAxis: { type: 'value', show: false },
+                        yAxis: { 
+                            type: 'category', 
+                            data: sorted.map(i => i.name), 
+                            axisLine: {show:false}, axisTick: {show:false}, 
+                            axisLabel: { fontWeight: 'bold', color: '#1e293b' } 
+                        },
+                        series: [{ 
+                            type: 'bar', 
+                            data: sorted.map(i => ({ value: i.value.toFixed(0), itemStyle: { color: i.color } })), 
+                            label: { show: true, position: 'right', formatter: '¥{c}', fontWeight: 'black', color: '#1e293b' },
+                            itemStyle: { borderRadius: [0, 10, 10, 0] },
+                            barWidth: 20
+                        }]
+                    }, true);
+                },
+
+                renderTrend() {
+                    const dailyMap = {};
+                    this.expenses.forEach(item => {
+                        if (this.excludeBigTransport && item.primaryCategory === '大交通') return;
+                        
+                        if (item.isMultiDay && item.nights > 0) {
+                            const [y, m, d] = item.startDate.split('-').map(Number);
+                            let curr = new Date(y, m - 1, d);
+                            const dailyAmount = item.amount / item.nights;
+                            
+                            for (let n = 0; n < item.nights; n++) {
+                                const dStr = `${curr.getFullYear()}-${String(curr.getMonth() + 1).padStart(2, '0')}-${String(curr.getDate()).padStart(2, '0')}`;
+                                dailyMap[dStr] = (dailyMap[dStr] || 0) + dailyAmount;
+                                curr.setDate(curr.getDate() + 1); 
+                            }
+                        } else {
+                            const dKey = item.date || item.startDate;
+                            if(dKey) {
+                                dailyMap[dKey] = (dailyMap[dKey] || 0) + item.amount;
+                            }
+                        }
+                    });
+                    
+                    const sortedDates = Object.keys(dailyMap).sort();
+                    const dailyData = sortedDates.map(d => dailyMap[d]);
+
+                    if (!this.charts.trend) this.charts.trend = echarts.init(document.getElementById('trendChart'));
+
+                    if (sortedDates.length === 0) {
+                        this.charts.trend.clear();
+                        return;
+                    }
+
+                    this.charts.trend.setOption({
+                        tooltip: { trigger: 'axis', backgroundColor: 'rgba(255,255,255,0.9)', borderRadius: 12, formatter: '{b}: ¥{c}' },
+                        grid: { left: '5%', right: '5%', bottom: '10%', top: '10%', containLabel: true },
+                        xAxis: { 
+                            type: 'category', 
+                            data: sortedDates.map(d => d.substring(5)), 
+                            axisLine: { lineStyle: { color: '#f1f5f9' } },
+                            axisLabel: { color: '#94a3b8', fontSize: 10, fontWeight: 'bold' }
+                        },
+                        yAxis: { 
+                            type: 'value', 
+                            splitLine: { lineStyle: { type: 'dashed', color: '#f1f5f9' } },
+                            axisLabel: { color: '#cbd5e1', fontSize: 10 }
+                        },
+                        series: [
+                            { 
+                                name: '当日花费',
+                                type: 'bar', 
+                                barWidth: '40%', 
+                                itemStyle: { 
+                                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                        { offset: 0, color: '#6366f1' },
+                                        { offset: 1, color: '#818cf8' }
+                                    ]),
+                                    borderRadius: [6, 6, 0, 0] 
+                                }, 
+                                label: { show: true, position: 'top', fontSize: 10, color: '#6366f1', fontWeight: 'bold', formatter: '¥{c}' },
+                                data: dailyData.map(v => v.toFixed(0)) 
+                            }
+                        ]
+                    }, true);
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
